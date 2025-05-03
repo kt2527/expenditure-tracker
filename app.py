@@ -1,86 +1,97 @@
 from flask import Flask, render_template, request, redirect, url_for, session
-from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+import sqlite3
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///expenditure.db'
-app.config['SECRET_KEY'] = 'your_secret_key_here'  # Replace with a secure key
-db = SQLAlchemy(app)
+app.secret_key = 'your_secret_key'
 
-# Models
-class Expenditure(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    amount = db.Column(db.Float, nullable=False)
-    description = db.Column(db.String(100), nullable=False)
-    date = db.Column(db.String(100), default=datetime.utcnow)
+# ---------- DATABASE SETUP ----------
+def init_db():
+    with sqlite3.connect('database.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE,
+                password TEXT,
+                role TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT,
+                amount REAL,
+                type TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        # Add default users if not present
+        cursor.execute("INSERT OR IGNORE INTO users (username, password, role) VALUES ('user', 'userpass', 'user')")
+        cursor.execute("INSERT OR IGNORE INTO users (username, password, role) VALUES ('father', 'fatherpass', 'father')")
 
-class Father(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    password = db.Column(db.String(100), nullable=False)
+init_db()
 
-# Routes
-@app.route('/')
-def home():
-    return redirect(url_for('dashboard'))
-
-@app.route('/dashboard', methods=['GET', 'POST'])
-def dashboard():
-    expenditures = Expenditure.query.all()
-    current_balance = sum([exp.amount for exp in expenditures])
-
+# ---------- ROUTES ----------
+@app.route('/', methods=['GET', 'POST'])
+def login():
     if request.method == 'POST':
-        amount = request.form['amount']
-        description = request.form['description']
-        if amount and description:
-            new_exp = Expenditure(amount=-float(amount), description=description, date=datetime.utcnow())
-            db.session.add(new_exp)
-            db.session.commit()
-        return redirect(url_for('dashboard'))
+        username, password = request.form['username'], request.form['password']
+        with sqlite3.connect('database.db') as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT role FROM users WHERE username=? AND password=?", (username, password))
+            result = cursor.fetchone()
+            if result:
+                session['username'] = username
+                session['role'] = result[0]
+                if result[0] == 'user':
+                    return redirect(url_for('user_dashboard'))
+                else:
+                    return redirect(url_for('father_dashboard'))
+        return render_template('login.html', error='Invalid credentials')
+    return render_template('login.html')
 
-    return render_template('dashboard.html', expenditures=expenditures, current_balance=current_balance)
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
-@app.route('/father_login', methods=['GET', 'POST'])
-def father_login():
+@app.route('/user', methods=['GET', 'POST'])
+def user_dashboard():
+    if 'username' not in session or session['role'] != 'user':
+        return redirect(url_for('login'))
+
+    username = session['username']
     if request.method == 'POST':
-        password = request.form['password']
-        father = Father.query.first()
-        if father and password == father.password:
-            session['father_logged_in'] = True
-            return redirect(url_for('father_dashboard'))
-        return 'Invalid credentials, try again.'
-    return render_template('father_login.html')
+        amount = float(request.form['amount'])
+        with sqlite3.connect('database.db') as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO transactions (username, amount, type) VALUES (?, ?, ?)", (username, amount, 'debit'))
+    transactions, balance = get_user_data(username)
+    return render_template('user_dashboard.html', username=username, balance=balance, transactions=transactions)
 
-@app.route('/father_dashboard', methods=['GET', 'POST'])
+@app.route('/father', methods=['GET', 'POST'])
 def father_dashboard():
-    if 'father_logged_in' not in session:
-        return redirect(url_for('father_login'))
-
-    expenditures = Expenditure.query.all()
-    current_balance = sum([exp.amount for exp in expenditures])
+    if 'username' not in session or session['role'] != 'father':
+        return redirect(url_for('login'))
 
     if request.method == 'POST':
-        add_money = request.form['add_money']
-        if add_money:
-            new_exp = Expenditure(amount=float(add_money), description="Money added by Father", date=datetime.utcnow())
-            db.session.add(new_exp)
-            db.session.commit()
-        return redirect(url_for('father_dashboard'))
+        amount = float(request.form['amount'])
+        with sqlite3.connect('database.db') as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO transactions (username, amount, type) VALUES (?, ?, ?)", ('user', amount, 'credit'))
 
-    return render_template('father_dashboard.html', expenditures=expenditures, current_balance=current_balance)
+    transactions, balance = get_user_data('user')
+    return render_template('father_dashboard.html', username='user', balance=balance, transactions=transactions)
 
-@app.route('/father_logout')
-def father_logout():
-    session.pop('father_logged_in', None)
-    return redirect(url_for('father_login'))
-
-# Initialize the database
-with app.app_context():
-    db.create_all()
-    # Create a default father password if not exists
-    if not Father.query.first():
-        default_father = Father(password='father123')  # Change this password as needed
-        db.session.add(default_father)
-        db.session.commit()
+def get_user_data(username):
+    with sqlite3.connect('database.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT amount, type, timestamp FROM transactions WHERE username=? ORDER BY timestamp DESC", (username,))
+        transactions = cursor.fetchall()
+        balance = 0
+        for amt, ttype, _ in transactions:
+            balance += amt if ttype == 'credit' else -amt
+        return transactions, balance
 
 if __name__ == '__main__':
     app.run(debug=True)
