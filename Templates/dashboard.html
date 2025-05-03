@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}User Dashboard{% endblock %}
+{% block content %}
+<h2 class="mb-4">Your Dashboard</h2>
+
+<!-- Current Balance -->
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Current Balance</h5>
+        <p class="card-text fs-4">₹{{ current_balance }}</p>
+    </div>
+</div>
+
+<!-- Add Expenditure Form -->
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Add Expenditure</h5>
+        <form method="POST">
+            <div class="mb-3">
+                <label for="amount" class="form-label">Amount</label>
+                <input type="number" step="0.01" class="form-control" id="amount" name="amount" required>
+            </div>
+            <div class="mb-3">
+                <label for="description" class="form-label">Description</label>
+                <input type="text" class="form-control" id="description" name="description" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Add Expenditure</button>
+        </form>
+    </div>
+</div>
+
+<!-- Expenditure History -->
+<h3>Expenditure History</h3>
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Amount</th>
+            <th>Description</th>
+            <th>Date</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for expenditure in expenditures %}
+        <tr>
+            <td>₹{{ expenditure.amount }}</td>
+            <td>{{ expenditure.description }}</td>
+            <td>{{ expenditure.date }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
